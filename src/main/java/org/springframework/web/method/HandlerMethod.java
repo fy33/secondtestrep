@@ -188,13 +188,14 @@ public class HandlerMethod {
     {
         return this.resolvedFromHandlerMethod;
     }
-    public HandlerMethod createWithResolveBean()
+    public HandlerMethod createWithResolvedBean()
     {
         Object handler=this.bean;
         if(this.bean instanceof String)
         {
             Assert.state(this.beanFactory!=null);
         }
+        return new HandlerMethod(this, handler);
     }
     public MethodParameter getReturnType(){
         return new HandlerMethodParameter(-1);
