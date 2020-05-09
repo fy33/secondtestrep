@@ -176,18 +176,80 @@ public abstract class AbstractFileResolvingResource extends AbstractResource {
 
 
 
+    @Override
+    public long contentLength() throws IOException {
+        URL url = getURL();
+        if (ResourceUtils.isFileURL(url)) {
+            // Proceed with file system resolution
+            File file = getFile();
+            long length = file.length();
+            if (length == 0L && !file.exists()) {
+                throw new FileNotFoundException(getDescription() +
+                        " cannot be resolved in the file system for checking its content length");
+            }
+            return length;
+        }
+        else {
+            // Try a URL connection content-length header
+            URLConnection con = url.openConnection();
+            customizeConnection(con);
+            return con.getContentLengthLong();
+        }
+    }
 
 
+    @Override
+    public long lastModified() throws IOException {
+        URL url = getURL();
+        boolean fileCheck = false;
+        if (ResourceUtils.isFileURL(url) || ResourceUtils.isJarURL(url)) {
+            // Proceed with file system resolution
+            fileCheck = true;
+            try {
+                File fileToCheck = getFileForLastModifiedCheck();
+                long lastModified = fileToCheck.lastModified();
+                if (lastModified > 0L || fileToCheck.exists()) {
+                    return lastModified;
+                }
+            }
+            catch (FileNotFoundException ex) {
+                // Defensively fall back to URL connection check instead
+            }
+        }
+        // Try a URL connection last-modified header
+        URLConnection con = url.openConnection();
+        customizeConnection(con);
+        long lastModified = con.getLastModified();
+        if (fileCheck && lastModified == 0 && con.getContentLengthLong() <= 0) {
+            throw new FileNotFoundException(getDescription() +
+                    " cannot be resolved in the file system for checking its last-modified timestamp");
+        }
+        return lastModified;
+    }
 
 
+    protected void customizeConnection(URLConnection con) throws IOException {
+        ResourceUtils.useCachesIfNecessary(con);
+        if (con instanceof HttpURLConnection) {
+            customizeConnection((HttpURLConnection) con);
+        }
+    }
+
+    protected void customizeConnection(HttpURLConnection con) throws IOException {
+        con.setRequestMethod("HEAD");
+    }
 
 
+    private static class VfsResourceDelegate {
 
+        public static Resource getResource(URL url) throws IOException {
+            return new VfsResource(VfsUtils.getRoot(url));
+        }
 
-
-
-
-
+        public static Resource getResource(URI uri) throws IOException {
+            return new VfsResource(VfsUtils.getRoot(uri));
+        }
+    }
 
 
 
