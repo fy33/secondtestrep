@@ -3,16 +3,17 @@ package org.springframework.beans.factory.support;
 import org.springframework.beans.*;
 import org.springframework.beans.factory.*;
 import org.springframework.beans.factory.config.*;
+import org.springframework.core.AttributeAccessor;
+import org.springframework.core.DecoratingClassLoader;
 import org.springframework.core.NamedThreadLocal;
 import org.springframework.core.ResolvableType;
 import org.springframework.core.convert.ConversionService;
+import org.springframework.core.log.LogMessage;
 import org.springframework.lang.Nullable;
 import org.springframework.util.*;
 
 import java.beans.PropertyEditor;
-import java.security.AccessControlContext;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
+import java.security.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -1206,9 +1207,314 @@ public abstract class AbstractBeanFactory extends FactoryBeanRegistrySupport imp
 
 
 
+    @Nullable
+    protected Class<?> resolveBeanClass(final RootBeanDefinition mbd, String beanName, final Class<?>... typesToMatch)
+            throws CannotLoadBeanClassException {
+
+        try {
+            if (mbd.hasBeanClass()) {
+                return mbd.getBeanClass();
+            }
+            if (System.getSecurityManager() != null) {
+                return AccessController.doPrivileged((PrivilegedExceptionAction<Class<?>>) () ->
+                        doResolveBeanClass(mbd, typesToMatch), getAccessControlContext());
+            }
+            else {
+                return doResolveBeanClass(mbd, typesToMatch);
+            }
+        }
+        catch (PrivilegedActionException pae) {
+            ClassNotFoundException ex = (ClassNotFoundException) pae.getException();
+            throw new CannotLoadBeanClassException(mbd.getResourceDescription(), beanName, mbd.getBeanClassName(), ex);
+        }
+        catch (ClassNotFoundException ex) {
+            throw new CannotLoadBeanClassException(mbd.getResourceDescription(), beanName, mbd.getBeanClassName(), ex);
+        }
+        catch (LinkageError err) {
+            throw new CannotLoadBeanClassException(mbd.getResourceDescription(), beanName, mbd.getBeanClassName(), err);
+        }
+    }
+
+    @Nullable
+    private Class<?> doResolveBeanClass(RootBeanDefinition mbd, Class<?>... typesToMatch)
+            throws ClassNotFoundException {
+
+        ClassLoader beanClassLoader = getBeanClassLoader();
+        ClassLoader dynamicLoader = beanClassLoader;
+        boolean freshResolve = false;
+
+        if (!ObjectUtils.isEmpty(typesToMatch)) {
+            // When just doing type checks (i.e. not creating an actual instance yet),
+            // use the specified temporary class loader (e.g. in a weaving scenario).
+            ClassLoader tempClassLoader = getTempClassLoader();
+            if (tempClassLoader != null) {
+                dynamicLoader = tempClassLoader;
+                freshResolve = true;
+                if (tempClassLoader instanceof DecoratingClassLoader) {
+                    DecoratingClassLoader dcl = (DecoratingClassLoader) tempClassLoader;
+                    for (Class<?> typeToMatch : typesToMatch) {
+                        dcl.excludeClass(typeToMatch.getName());
+                    }
+                }
+            }
+        }
+
+        String className = mbd.getBeanClassName();
+        if (className != null) {
+            Object evaluated = evaluateBeanDefinitionString(className, mbd);
+            if (!className.equals(evaluated)) {
+                // A dynamically resolved expression, supported as of 4.2...
+                if (evaluated instanceof Class) {
+                    return (Class<?>) evaluated;
+                }
+                else if (evaluated instanceof String) {
+                    className = (String) evaluated;
+                    freshResolve = true;
+                }
+                else {
+                    throw new IllegalStateException("Invalid class name expression result: " + evaluated);
+                }
+            }
+            if (freshResolve) {
+                // When resolving against a temporary class loader, exit early in order
+                // to avoid storing the resolved Class in the bean definition.
+                if (dynamicLoader != null) {
+                    try {
+                        return dynamicLoader.loadClass(className);
+                    }
+                    catch (ClassNotFoundException ex) {
+                        if (logger.isTraceEnabled()) {
+                            logger.trace("Could not load class [" + className + "] from " + dynamicLoader + ": " + ex);
+                        }
+                    }
+                }
+                return ClassUtils.forName(className, dynamicLoader);
+            }
+        }
+
+        // Resolve regularly, caching the result in the BeanDefinition...
+        return mbd.resolveBeanClass(beanClassLoader);
+    }
 
 
 
+    @Nullable
+    protected Object evaluateBeanDefinitionString(@Nullable String value, @Nullable BeanDefinition beanDefinition) {
+        if (this.beanExpressionResolver == null) {
+            return value;
+        }
+
+        Scope scope = null;
+        if (beanDefinition != null) {
+            String scopeName = beanDefinition.getScope();
+            if (scopeName != null) {
+                scope = getRegisteredScope(scopeName);
+            }
+        }
+        return this.beanExpressionResolver.evaluate(value, new BeanExpressionContext(this, scope));
+    }
+
+    @Nullable
+    protected Class<?> predictBeanType(String beanName, RootBeanDefinition mbd, Class<?>... typesToMatch) {
+        Class<?> targetType = mbd.getTargetType();
+        if (targetType != null) {
+            return targetType;
+        }
+        if (mbd.getFactoryMethodName() != null) {
+            return null;
+        }
+        return resolveBeanClass(mbd, beanName, typesToMatch);
+    }
+
+
+    protected boolean isFactoryBean(String beanName, RootBeanDefinition mbd) {
+        Boolean result = mbd.isFactoryBean;
+        if (result == null) {
+            Class<?> beanType = predictBeanType(beanName, mbd, FactoryBean.class);
+            result = (beanType != null && FactoryBean.class.isAssignableFrom(beanType));
+            mbd.isFactoryBean = result;
+        }
+        return result;
+    }
+
+
+    protected ResolvableType getTypeForFactoryBean(String beanName, RootBeanDefinition mbd, boolean allowInit) {
+        ResolvableType result = getTypeForFactoryBeanFromAttributes(mbd);
+        if (result != ResolvableType.NONE) {
+            return result;
+        }
+
+        if (allowInit && mbd.isSingleton()) {
+            try {
+                FactoryBean<?> factoryBean = doGetBean(FACTORY_BEAN_PREFIX + beanName, FactoryBean.class, null, true);
+                Class<?> objectType = getTypeForFactoryBean(factoryBean);
+                return (objectType != null) ? ResolvableType.forClass(objectType) : ResolvableType.NONE;
+            }
+            catch (BeanCreationException ex) {
+                if (ex.contains(BeanCurrentlyInCreationException.class)) {
+                    logger.trace(LogMessage.format("Bean currently in creation on FactoryBean type check: %s", ex));
+                }
+                else if (mbd.isLazyInit()) {
+                    logger.trace(LogMessage.format("Bean creation exception on lazy FactoryBean type check: %s", ex));
+                }
+                else {
+                    logger.debug(LogMessage.format("Bean creation exception on non-lazy FactoryBean type check: %s", ex));
+                }
+                onSuppressedException(ex);
+            }
+        }
+        return ResolvableType.NONE;
+    }
+
+
+    ResolvableType getTypeForFactoryBeanFromAttributes(AttributeAccessor attributes) {
+        Object attribute = attributes.getAttribute(FactoryBean.OBJECT_TYPE_ATTRIBUTE);
+        if (attribute instanceof ResolvableType) {
+            return (ResolvableType) attribute;
+        }
+        if (attribute instanceof Class) {
+            return ResolvableType.forClass((Class<?>) attribute);
+        }
+        return ResolvableType.NONE;
+    }
+
+
+
+    @Nullable
+    @Deprecated
+    protected Class<?> getTypeForFactoryBean(String beanName, RootBeanDefinition mbd) {
+        return getTypeForFactoryBean(beanName, mbd, true).resolve();
+    }
+
+    protected void markBeanAsCreated(String beanName) {
+        if (!this.alreadyCreated.contains(beanName)) {
+            synchronized (this.mergedBeanDefinitions) {
+                if (!this.alreadyCreated.contains(beanName)) {
+                    // Let the bean definition get re-merged now that we're actually creating
+                    // the bean... just in case some of its metadata changed in the meantime.
+                    clearMergedBeanDefinition(beanName);
+                    this.alreadyCreated.add(beanName);
+                }
+            }
+        }
+    }
+
+
+    protected void cleanupAfterBeanCreationFailure(String beanName) {
+        synchronized (this.mergedBeanDefinitions) {
+            this.alreadyCreated.remove(beanName);
+        }
+    }
+
+
+    protected boolean isBeanEligibleForMetadataCaching(String beanName) {
+        return this.alreadyCreated.contains(beanName);
+    }
+
+
+
+    protected boolean removeSingletonIfCreatedForTypeCheckOnly(String beanName) {
+        if (!this.alreadyCreated.contains(beanName)) {
+            removeSingleton(beanName);
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    protected boolean hasBeanCreationStarted() {
+        return !this.alreadyCreated.isEmpty();
+    }
+
+
+
+    protected Object getObjectForBeanInstance(
+            Object beanInstance, String name, String beanName, @Nullable RootBeanDefinition mbd) {
+
+        // Don't let calling code try to dereference the factory if the bean isn't a factory.
+        if (BeanFactoryUtils.isFactoryDereference(name)) {
+            if (beanInstance instanceof NullBean) {
+                return beanInstance;
+            }
+            if (!(beanInstance instanceof FactoryBean)) {
+                throw new BeanIsNotAFactoryException(beanName, beanInstance.getClass());
+            }
+            if (mbd != null) {
+                mbd.isFactoryBean = true;
+            }
+            return beanInstance;
+        }
+
+        // Now we have the bean instance, which may be a normal bean or a FactoryBean.
+        // If it's a FactoryBean, we use it to create a bean instance, unless the
+        // caller actually wants a reference to the factory.
+        if (!(beanInstance instanceof FactoryBean)) {
+            return beanInstance;
+        }
+
+        Object object = null;
+        if (mbd != null) {
+            mbd.isFactoryBean = true;
+        }
+        else {
+            object = getCachedObjectForFactoryBean(beanName);
+        }
+        if (object == null) {
+            // Return bean instance from factory.
+            FactoryBean<?> factory = (FactoryBean<?>) beanInstance;
+            // Caches object obtained from FactoryBean if it is a singleton.
+            if (mbd == null && containsBeanDefinition(beanName)) {
+                mbd = getMergedLocalBeanDefinition(beanName);
+            }
+            boolean synthetic = (mbd != null && mbd.isSynthetic());
+            object = getObjectFromFactoryBean(factory, beanName, !synthetic);
+        }
+        return object;
+    }
+
+
+
+    public boolean isBeanNameInUse(String beanName) {
+        return isAlias(beanName) || containsLocalBean(beanName) || hasDependentBean(beanName);
+    }
+
+    protected boolean requiresDestruction(Object bean, RootBeanDefinition mbd) {
+        return (bean.getClass() != NullBean.class &&
+                (DisposableBeanAdapter.hasDestroyMethod(bean, mbd) || (hasDestructionAwareBeanPostProcessors() &&
+                        DisposableBeanAdapter.hasApplicableProcessors(bean, getBeanPostProcessors()))));
+    }
+
+    protected void registerDisposableBeanIfNecessary(String beanName, Object bean, RootBeanDefinition mbd) {
+        AccessControlContext acc = (System.getSecurityManager() != null ? getAccessControlContext() : null);
+        if (!mbd.isPrototype() && requiresDestruction(bean, mbd)) {
+            if (mbd.isSingleton()) {
+                // Register a DisposableBean implementation that performs all destruction
+                // work for the given bean: DestructionAwareBeanPostProcessors,
+                // DisposableBean interface, custom destroy method.
+                registerDisposableBean(beanName,
+                        new DisposableBeanAdapter(bean, beanName, mbd, getBeanPostProcessors(), acc));
+            }
+            else {
+                // A bean with a custom scope...
+                Scope scope = this.scopes.get(mbd.getScope());
+                if (scope == null) {
+                    throw new IllegalStateException("No Scope registered for scope name '" + mbd.getScope() + "'");
+                }
+                scope.registerDestructionCallback(beanName,
+                        new DisposableBeanAdapter(bean, beanName, mbd, getBeanPostProcessors(), acc));
+            }
+        }
+    }
+
+    protected abstract boolean containsBeanDefinition(String beanName);
+
+    protected abstract BeanDefinition getBeanDefinition(String beanName) throws BeansException;
+
+
+
+    protected abstract Object createBean(String beanName, RootBeanDefinition mbd, @Nullable Object[] args)
+            throws BeanCreationException;
 
 
 
