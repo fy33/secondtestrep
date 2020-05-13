@@ -2,12 +2,16 @@ package org.springframework.core.io;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.springframework.core.NestedIOException;
 import org.springframework.lang.Nullable;
+import org.springframework.util.ResourceUtils;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
@@ -61,7 +65,16 @@ public abstract class AbstractResource implements Resource {
     public URL getURL() throws IOException {
         throw new FileNotFoundException(getDescription() + " cannot be resolved to URL");
     }
-
+    @Override
+    public URI getURI() throws IOException {
+        URL url = getURL();
+        try {
+            return ResourceUtils.toURI(url);
+        }
+        catch (URISyntaxException ex) {
+            throw new NestedIOException("Invalid URI [" + url + "]", ex);
+        }
+    }
     @Override
     public File getFile() throws IOException {
         throw new FileNotFoundException(getDescription() + " cannot be resolved to absolute file path");
