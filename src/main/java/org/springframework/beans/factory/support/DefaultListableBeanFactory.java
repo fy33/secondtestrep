@@ -4,6 +4,7 @@ package org.springframework.beans.factory.support;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.TypeConverter;
 import org.springframework.beans.factory.BeanDefinitionStoreException;
+import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanDefinition;
@@ -38,7 +39,9 @@ implements ConfigurableListableBeanFactory,BeanDefinitionRegistry, Serializable 
             javaxInjectProviderClass = null;
         }
     }
-
+    public DefaultListableBeanFactory(@Nullable BeanFactory parentBeanFactory) {
+        super(parentBeanFactory);
+    }
 
     @Override
     public void registerResolvableDependency(Class<?> dependencyType, Object autowiredValue) {

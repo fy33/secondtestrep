@@ -1,23 +1,26 @@
-package org.springframework.web.context.support;
+package org.springframework.context.support;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.BeansException;
 import org.springframework.context.ApplicationContext;
-import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.ApplicationContextException;
-import org.springframework.context.support.MessageSourceAccessor;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
+import org.springframework.web.context.ApplicationContextAware;
 
-public class ApplicationObjectSupport implements ApplicationContextAware {
-    protected final Log logger = LogFactory.getLog(this.getClass());
+public abstract class ApplicationObjectSupport implements ApplicationContextAware {
+    /** Logger that is available to subclasses. */
+    protected final Log logger = LogFactory.getLog(getClass());
 
+    /** ApplicationContext this object runs in. */
     @Nullable
     private ApplicationContext applicationContext;
 
+    /** MessageSourceAccessor for easy message access. */
     @Nullable
     private MessageSourceAccessor messageSourceAccessor;
+
 
     @Override
     public final void setApplicationContext(@Nullable ApplicationContext context) throws BeansException {
@@ -46,20 +49,20 @@ public class ApplicationObjectSupport implements ApplicationContextAware {
         }
     }
 
-
     protected boolean isContextRequired() {
         return false;
     }
-
 
 
     protected Class<?> requiredContextClass() {
         return ApplicationContext.class;
     }
 
+
     protected void initApplicationContext(ApplicationContext context) throws BeansException {
         initApplicationContext();
     }
+
 
     protected void initApplicationContext() throws BeansException {
     }
@@ -74,11 +77,13 @@ public class ApplicationObjectSupport implements ApplicationContextAware {
         return this.applicationContext;
     }
 
+
     protected final ApplicationContext obtainApplicationContext() {
         ApplicationContext applicationContext = getApplicationContext();
         Assert.state(applicationContext != null, "No ApplicationContext");
         return applicationContext;
     }
+
     @Nullable
     protected final MessageSourceAccessor getMessageSourceAccessor() throws IllegalStateException {
         if (this.messageSourceAccessor == null && isContextRequired()) {
@@ -87,6 +92,43 @@ public class ApplicationObjectSupport implements ApplicationContextAware {
         }
         return this.messageSourceAccessor;
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
