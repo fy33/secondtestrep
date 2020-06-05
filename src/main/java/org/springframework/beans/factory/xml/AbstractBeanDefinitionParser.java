@@ -11,7 +11,7 @@ import org.springframework.lang.Nullable;
 import org.springframework.util.StringUtils;
 import org.w3c.dom.Element;
 
-public abstract class AbstractBeanDefinitonParser implements BeanDefinitionParser {
+public abstract class AbstractBeanDefinitionParser implements BeanDefinitionParser {
     /** Constant for the "id" attribute. */
     public static final String ID_ATTRIBUTE = "id";
 
