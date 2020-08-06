@@ -6,7 +6,7 @@ import org.springframework.beans.factory.support.BeanDefinitionBuilder;
 import org.springframework.lang.Nullable;
 import org.w3c.dom.Element;
 
-public class AbstractSingleBeanDefinitionParser extends AbstractBeanDefinitionParser {
+public  abstract class AbstractSingleBeanDefinitionParser extends AbstractBeanDefinitionParser {
     @Override
     protected final AbstractBeanDefinition parseInternal(Element element, ParserContext parserContext) {
         BeanDefinitionBuilder builder = BeanDefinitionBuilder.genericBeanDefinition();

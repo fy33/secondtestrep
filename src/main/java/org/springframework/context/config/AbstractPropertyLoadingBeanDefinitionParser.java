@@ -7,7 +7,7 @@ import org.springframework.beans.factory.xml.ParserContext;
 import org.springframework.util.StringUtils;
 import org.w3c.dom.Element;
 
-public class AbstractPropertyLoadingBeanDefinitionParser extends AbstractSingleBeanDefinitionParser {
+public abstract class AbstractPropertyLoadingBeanDefinitionParser extends AbstractSingleBeanDefinitionParser {
     @Override
     protected boolean shouldGenerateId() {
         return true;

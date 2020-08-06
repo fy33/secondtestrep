@@ -7,5 +7,5 @@ import org.w3c.dom.Element;
 public interface BeanDefinitionParser {
     @Nullable
     BeanDefinition parse(Element element, ParserContext parserContext);
-
+a
 }
